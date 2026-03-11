@@ -208,6 +208,7 @@
   .filter-chip[data-cat="closure"].active { color: var(--tag-closure); border-color: var(--tag-closure); }
   .filter-chip[data-cat="venture"].active { color: var(--tag-venture); border-color: var(--tag-venture); }
   .filter-chip[data-cat="market"].active { color: var(--tag-market); border-color: var(--tag-market); }
+  .filter-chip[data-cat="industry"].active { color: #a0a0c0; border-color: #a0a0c0; }
 
   /* Time filter chips */
   .time-chip.active { color: var(--accent3); border-color: var(--accent3); }
@@ -327,6 +328,7 @@
   .tag-closure { background: rgba(255,107,53,0.15); color: var(--tag-closure); }
   .tag-venture { background: rgba(34,211,165,0.15); color: var(--tag-venture); }
   .tag-market { background: rgba(255,230,0,0.1); color: var(--tag-market); }
+  .tag-industry { background: rgba(107,107,133,0.15); color: #a0a0c0; }
   .tag-other { background: rgba(107,107,133,0.15); color: var(--tag-other); }
 
   .source-name {
@@ -523,13 +525,13 @@
     <button class="filter-chip" data-cat="venture" onclick="setFilter('venture')">New Ventures</button>
     <button class="filter-chip" data-cat="closure" onclick="setFilter('closure')">Closures</button>
     <button class="filter-chip" data-cat="market" onclick="setFilter('market')">Market Intel</button>
+    <button class="filter-chip" data-cat="industry" onclick="setFilter('industry')">Industry</button>
   </div>
   <div class="filter-inner" style="margin-top:0.4rem; padding-top:0.4rem; border-top:1px solid var(--border);">
     <span class="filter-label">Period:</span>
-    <button class="filter-chip time-chip active" data-time="all" onclick="setTime('all')">All Time</button>
     <button class="filter-chip time-chip" data-time="week" onclick="setTime('week')">This Week</button>
     <button class="filter-chip time-chip" data-time="month" onclick="setTime('month')">This Month</button>
-    <button class="filter-chip time-chip" data-time="quarter" onclick="setTime('quarter')">This Quarter</button>
+    <button class="filter-chip time-chip active" data-time="quarter" onclick="setTime('quarter')">3 Months</button>
   </div>
 </div>
 
@@ -571,31 +573,56 @@ const PROXY_URLS = [
 
 // Google News RSS — targeted search queries for VFX industry intelligence
 const GOOGLE_NEWS_QUERIES = [
+  // Broad catch-all — matches the "vfx" Google News search directly
+  'vfx',
+  'visual effects',
+  'VFX studio',
+  'VFX industry',
+
+  // Business intelligence
   'VFX studio acquisition merger',
-  'visual effects company layoffs',
-  'VFX tax incentive rebate film',
-  'visual effects AI artificial intelligence',
+  'VFX company layoffs redundancies',
   'VFX studio closes bankruptcy',
+  'VFX company funding investment',
   'VFX executive appointed CEO hired',
+  'animation studio acquisition merger',
+  'post production company news',
+
+  // Policy & incentives
+  'VFX tax incentive rebate film',
   'film production incentive subsidy government',
-  'VFX company funding investment venture',
+  'film tax credit rebate legislation',
+
+  // Technology
+  'visual effects AI artificial intelligence',
+  'virtual production LED volume studio',
+  'generative AI film production Hollywood',
+
+  // Labor
   'visual effects union IATSE strike',
   'VFX industry market report',
-  'virtual production LED volume studio',
-  'animation studio acquisition merger',
-  'Weta ILM DNEG Framestore news',
-  'Marvel VFX Disney VFX Netflix VFX',
-  'generative AI film production Hollywood',
-  'film tax credit rebate legislation',
-  'post production company layoffs closes',
-  'visual effects society VES awards',
+  'visual effects society VES',
+
+  // Major vendors — catches news not tagged "VFX"
+  'Weta FX news',
+  'ILM Industrial Light Magic news',
+  'DNEG news',
+  'Framestore news',
+  'Scanline VFX news',
+  'Digital Domain news',
+  'Cinesite news',
+  'Rodeo FX news',
+  'Ghost VFX news',
+  'Jellyfish Pictures news',
+  'Milk VFX news',
 ];
 
 function buildGoogleNewsFeeds() {
   return GOOGLE_NEWS_QUERIES.map(q => ({
     url: `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`,
     name: 'Google News',
-    isGoogle: true
+    isGoogle: true,
+    broadCatch: true  // use looser category matching for search-targeted feeds
   }));
 }
 
@@ -707,64 +734,79 @@ const VFX_BROAD_KEYWORDS = [
 
 let allArticles = [];
 let activeFilter = 'all';
-let activeTime = 'all';
+let activeTime = 'quarter';
 let countdownInterval = null;
 let filteredCount = 0;
 
+// Hard cutoff — never show anything older than 3 months
+const HARD_CUTOFF = new Date(Date.now() - 91 * 86400000);
+
 // Category detection
-function detectCategory(title, description) {
+function detectCategory(title, description, broadCatch = false) {
   const text = (title + ' ' + description).toLowerCase();
   
   const patterns = {
     leadership: [
-      'ceo', 'cfo', 'cto', 'president', 'vp ', 'vice president', 'director', 
+      'ceo', 'cfo', 'cto', 'coo', 'president', 'vp ', 'vice president',
       'appointed', 'hired', 'joins', 'promoted', 'leaves', 'departs', 'resigned',
-      'fired', 'layoff', 'layoffs', 'laid off', 'redundancies', 'headcount',
+      'fired', 'layoff', 'layoffs', 'laid off', 'redundancies', 'headcount', 'cuts jobs',
       'executive', 'leadership', 'management', 'founder', 'co-founder',
-      'steps down', 'named as', 'new head', 'new chief'
+      'steps down', 'named as', 'new head', 'new chief', 'takes over', 'succeeds'
     ],
     tax: [
-      'tax credit', 'tax incentive', 'rebate', 'subsidy', 'grant', 'fund',
+      'tax credit', 'tax incentive', 'rebate', 'subsidy', 'grant',
       'incentive', 'government support', 'production incentive', 'film commission',
       'tax relief', 'vfx rebate', 'screen incentive', 'location incentive',
-      'filming incentive', 'tax break', 'offset', 'state fund', 'uk tax'
+      'filming incentive', 'tax break', 'offset', 'state fund', 'uk tax',
+      'screen australia', 'british film', 'canada media fund', 'creative europe'
     ],
     ai: [
       'artificial intelligence', ' ai ', 'machine learning', 'generative ai',
-      'gen ai', 'neural', 'diffusion', 'sora', 'midjourney', 'stable diffusion',
+      'gen ai', 'neural', 'diffusion model', 'sora', 'midjourney', 'stable diffusion',
       'automation', 'deep learning', 'gpt', 'llm', 'deepfake', 'synthetic media',
-      'ai-generated', 'ai tool', 'real-time rendering', 'aivfx', 'autonomous',
-      'openai', 'google deepmind', 'runway ml', 'pika'
+      'ai-generated', 'ai tool', 'real-time rendering', 'autonomous',
+      'openai', 'google deepmind', 'runway ml', 'pika', 'kling', 'luma ai',
+      'ai workflow', 'ai pipeline', 'neural rendering', 'nerf', 'gaussian splatting'
     ],
     closure: [
       'shutdown', 'closes', 'closed', 'bankrupt', 'insolvency', 'administration',
       'wind down', 'ceases', 'liquidat', 'chapter 11', 'chapter 7',
-      'goes under', 'shut down', 'fold', 'acqui', 'merged', 'takeover',
-      'bought out', 'acquired'
+      'goes under', 'shut down', 'folds', 'acqui', 'merged', 'takeover',
+      'bought out', 'acquired', 'absorbed', 'dissolved', 'ceasing operations'
     ],
     venture: [
       'launch', 'new studio', 'expands', 'expansion', 'opens', 'new office',
-      'funding', 'investment', 'series a', 'series b', 'venture capital',
+      'funding', 'investment', 'series a', 'series b', 'series c', 'venture capital',
       'raises', 'backed', 'spin-off', 'spinoff', 'new division', 'new branch',
-      'partnership', 'joint venture', 'collaboration', 'founded', 'startup',
-      'new facility'
+      'partnership', 'joint venture', 'founded', 'startup', 'new facility',
+      'new pipeline', 'new technology', 'new tool', 'new platform', 'new service',
+      'deal with', 'signs with', 'teams with', 'collaborates with'
     ],
     market: [
       'revenue', 'profit', 'loss', 'earnings', 'market share', 'ipo',
       'valuation', 'quarterly', 'annual report', 'forecast', 'outlook',
       'industry report', 'box office', 'streaming', 'union', 'strike',
       'wage', 'contract', 'iatse', 'vga', 'guild', 'residual',
-      'deal', 'rights', 'ip ', 'intellectual property', 'patent',
-      'regulation', 'legislation', 'policy', 'survey', 'study'
-    ]
+      'deal', 'rights', 'intellectual property', 'patent',
+      'regulation', 'legislation', 'policy', 'survey', 'study',
+      'market size', 'growth', 'decline', 'demand', 'production spend'
+    ],
+    // Catch-all for general VFX industry news from targeted Google News searches
+    industry: broadCatch ? [
+      'vfx', 'visual effects', 'cgi', 'animation', 'post production',
+      'weta', 'ilm', 'dneg', 'framestore', 'scanline', 'digital domain',
+      'cinesite', 'rodeo', 'ghost vfx', 'jellyfish', 'milk vfx',
+      'virtual production', 'oscar', 'emmy', 'ves award', 'award'
+    ] : []
   };
 
   for (const [cat, keywords] of Object.entries(patterns)) {
+    if (keywords.length === 0) continue;
     for (const kw of keywords) {
       if (text.includes(kw)) return cat;
     }
   }
-  return null; // null = not relevant
+  return null;
 }
 
 // Check if article is substantive industry news (not a showcase/reel)
@@ -798,7 +840,7 @@ async function fetchRSSFeed(feed, proxyIndex = 0) {
     : proxy + encodeURIComponent(feed.url);
 
   try {
-    const res = await fetch(fetchUrl, { signal: AbortSignal.timeout(10000) });
+    const res = await fetch(fetchUrl, { signal: AbortSignal.timeout(6000) }); // 6s timeout (was 10s)
     if (!res.ok) throw new Error('Bad response');
     
     let xmlText;
@@ -823,20 +865,24 @@ async function fetchRSSFeed(feed, proxyIndex = 0) {
       
       if (!title || !link) return;
 
+      // Parse and hard-cut at 3 months — skip undated articles
+      let date = null;
+      try { date = new Date(pubDate); } catch(e) {}
+      if (!date || isNaN(date) || date < HARD_CUTOFF) return;
+
       const fullText = (title + ' ' + (desc || content)).toLowerCase();
 
-      // For broad feeds (Deadline main, Variety Film, etc.) — require a VFX keyword
+      // For broad feeds require a VFX keyword
       if (feed.vfxFilter) {
         const hasVFX = VFX_BROAD_KEYWORDS.some(kw => fullText.includes(kw));
         if (!hasVFX) return;
       }
       
-      const category = detectCategory(title, desc || content);
+      const category = detectCategory(title, desc || content, feed.broadCatch || false);
       if (!category) return;
-      if (!isSubstantiveNews(title, desc || content)) return;
-      
-      let date = null;
-      try { date = new Date(pubDate); } catch(e) {}
+
+      // Only apply the showcase/reel rejection filter on non-broadCatch feeds
+      if (!feed.broadCatch && !isSubstantiveNews(title, desc || content)) return;
       
       articles.push({
         title,
@@ -877,7 +923,8 @@ function getCategoryLabel(cat) {
     ai: 'AI & Tech',
     closure: 'Closure',
     venture: 'New Venture',
-    market: 'Market Intel'
+    market: 'Market Intel',
+    industry: 'Industry'
   };
   return labels[cat] || cat;
 }
@@ -896,7 +943,7 @@ function renderCategoryBar(articles) {
   const cats = {};
   articles.forEach(a => { cats[a.category] = (cats[a.category]||0) + 1; });
   const total = articles.length;
-  const colors = { leadership: '#ff3d71', tax: '#00e5ff', ai: '#a855f7', closure: '#ff6b35', venture: '#22d3a5', market: '#ffe600' };
+  const colors = { leadership: '#ff3d71', tax: '#00e5ff', ai: '#a855f7', closure: '#ff6b35', venture: '#22d3a5', market: '#ffe600', industry: '#a0a0c0' };
   
   const bar = document.getElementById('categoryBar');
   bar.innerHTML = Object.entries(cats).map(([cat, count]) => 
@@ -906,10 +953,9 @@ function renderCategoryBar(articles) {
 
 function getTimeCutoff(period) {
   const now = new Date();
-  if (period === 'week')    return new Date(now - 7 * 86400000);
-  if (period === 'month')   return new Date(now - 30 * 86400000);
-  if (period === 'quarter') return new Date(now - 91 * 86400000);
-  return null;
+  if (period === 'week')  return new Date(now - 7 * 86400000);
+  if (period === 'month') return new Date(now - 30 * 86400000);
+  return HARD_CUTOFF; // 'quarter' or anything else = 3 months max
 }
 
 function renderFeed(articles) {
@@ -938,8 +984,8 @@ function renderFeed(articles) {
     return;
   }
 
-  // Sort by date desc
-  const sorted = [...filtered].sort((a, b) => (b.date || 0) - (a.date || 0));
+  // Always sort newest first
+  const sorted = [...filtered].sort((a, b) => b.date - a.date);
 
   container.innerHTML = `<div class="articles-grid">${sorted.map((art, i) => `
     <a class="article-card" href="${art.link}" target="_blank" rel="noopener">
